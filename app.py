@@ -77,6 +77,34 @@ def extract_from_files(uploaded_files) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Session state
+# ---------------------------------------------------------------------------
+
+def init_state() -> None:
+    if "rows" not in st.session_state:
+        st.session_state.rows = []
+    if "seen" not in st.session_state:
+        st.session_state.seen = set()
+
+
+def add_rows(new_rows: list[dict]) -> int:
+    """Append rows whose (Filename, Source) pair hasn't been seen yet. Returns added count."""
+    added = 0
+    for row in new_rows:
+        key = (row["Filename"], row["Source"], row["Path"])
+        if key not in st.session_state.seen:
+            st.session_state.seen.add(key)
+            st.session_state.rows.append(row)
+            added += 1
+    return added
+
+
+def clear_state() -> None:
+    st.session_state.rows = []
+    st.session_state.seen = set()
+
+
+# ---------------------------------------------------------------------------
 # Excel export
 # ---------------------------------------------------------------------------
 
@@ -141,31 +169,43 @@ def render_download(rows: list[dict]) -> None:
 
 def main() -> None:
     st.set_page_config(page_title=PAGE_TITLE, page_icon=PAGE_ICON, layout="wide")
-    st.title(f"Filename Extractor")
+    st.title("Filename Extractor")
     st.caption(
-        "Upload any files or ZIP archives (representing folders). "
-        "All filenames are extracted and exported to Excel."
+        "Upload files in one or more batches. Each batch is added to the list. "
+        "ZIP files are treated as folders. Download everything as Excel when done."
     )
+
+    init_state()
 
     uploaded_files = st.file_uploader(
-        label="Drop files here",
+        label="Drop files here (upload multiple batches — each adds to the list)",
         accept_multiple_files=True,
         help="Accepts PDF, CSV, TXT, Excel, Word, ZIP, and any other file type.",
+        key="uploader",
     )
 
-    if not uploaded_files:
+    if uploaded_files:
+        with st.spinner("Extracting filenames..."):
+            new_rows = extract_from_files(uploaded_files)
+        added = add_rows(new_rows)
+        if added:
+            st.toast(f"Added {added} new entr{'y' if added == 1 else 'ies'}.")
+
+    rows = st.session_state.rows
+
+    if not rows:
         st.info("Upload one or more files to get started. ZIP files are treated as folders.")
         return
 
-    with st.spinner("Extracting filenames…"):
-        rows = extract_from_files(uploaded_files)
-
-    if not rows:
-        st.warning("No filenames could be extracted from the uploaded files.")
-        return
-
     df = pd.DataFrame(rows, columns=COLUMNS)
-    st.success(f"Extracted **{len(df)}** entr{'y' if len(df) == 1 else 'ies'}.")
+
+    col_title, col_clear = st.columns([6, 1])
+    with col_title:
+        st.success(f"**{len(df)}** entr{'y' if len(df) == 1 else 'ies'} collected across all uploads.")
+    with col_clear:
+        if st.button("Clear all", use_container_width=True):
+            clear_state()
+            st.rerun()
 
     render_summary(df)
     render_table(df)
